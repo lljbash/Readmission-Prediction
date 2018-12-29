@@ -5,36 +5,32 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 import xgboost as xgb
 
-def _extract_info(items, label_split):
+def _extract_info(items, label_filter):
     labels = []
     ordered_features = []
     unordered_features = {}
     for item in items:
-        labels.append(item.get("label", "?"))
+        label = item.get("label", "?")
+        label = label_filter(label)
+        if label not in (0, 1):
+            continue
+        labels.append(label)
         ordered_features.append(item.get("ordered", "?"))
         for key, value in item.get("unordered", {}).items():
             if key not in unordered_features:
                 unordered_features[key] = []
             unordered_features[key].append(value)
-    labels = np.array(labels)
-    labels = (labels > label_split).astype(int)
     return labels, ordered_features, unordered_features
 
-def _categories_to_one_hot(labels, features):
+def _categories_to_one_hot(labels, features, ncols):
     categories = []
     xlabels = []
-    ncols = 0
     if labels is None:
         labels = [None] * len(features)
     for label, category in zip(labels, features):
         if category != "?":
             categories.append(category)
             xlabels.append(label)
-            if type(category) is not list:
-                ncols = max(ncols, category + 1)
-            else:
-                for entry in category:
-                    ncols = max(ncols, entry + 1)
     bin_features = np.zeros([len(xlabels), ncols])
     for i, category in enumerate(categories):
         if type(category) is not list:
@@ -45,8 +41,8 @@ def _categories_to_one_hot(labels, features):
     xlabels = np.array(xlabels)
     return xlabels, bin_features
 
-def _categories_to_proba(features, clf):
-    _, bin_features = _categories_to_one_hot(None, features)
+def _categories_to_proba(features, ncols, clf):
+    _, bin_features = _categories_to_one_hot(None, features, ncols)
     proba = clf.predict_proba(bin_features)[:, 0]
     proba_feature = list(features)
     j = 0
@@ -56,18 +52,18 @@ def _categories_to_proba(features, clf):
             j += 1
     return proba_feature
 
-def _unordered_regression(unordered_features, labels):
+def _unordered_regression(unordered_features, category_count, labels):
     clfs = {}
     for key, features in unordered_features.items():
-        xlabels, bin_features = _categories_to_one_hot(labels, features)
-        clf = LogisticRegression(random_state=0).fit(bin_features, xlabels)
+        xlabels, bin_features = _categories_to_one_hot(labels, features, category_count[key])
+        clf = LogisticRegression(random_state=0, class_weight="balanced").fit(bin_features, xlabels)
         clfs[key] = clf
     return clfs
 
-def _concat_features(ordered_features, unordered_features, clfs):
+def _concat_features(ordered_features, unordered_features, category_count, clfs):
     features_to_concat = [np.array(ordered_features)]
     for key in clfs.keys():
-        proba_feature = _categories_to_proba(unordered_features[key], clfs[key])
+        proba_feature = _categories_to_proba(unordered_features[key], category_count[key], clfs[key])
         proba_feature = np.array(proba_feature).reshape([-1, 1])
         features_to_concat.append(proba_feature)
     features = np.concatenate(features_to_concat, axis=1)
@@ -82,46 +78,55 @@ def _write_to_txt(labels, features, filename):
                     line += " %d:%.15f" % (i, float(entry))
             print(line, file=f)
 
-def _prepare_for_xgboost(items, label_split, filename):
-    labels, ordered_features, unordered_features = _extract_info(items, label_split)
-    clfs = _unordered_regression(unordered_features, labels)
-    features = _concat_features(ordered_features, unordered_features, clfs)
+def train_model(items, category_count, label_filter):
+    filename = "/tmp/ram/diabetic_train_%d_%d_%d.txt" % (label_filter(1), label_filter(2), label_filter(3))
+    labels, ordered_features, unordered_features = _extract_info(items, label_filter)
+    regs = _unordered_regression(unordered_features, category_count, labels)
+    features = _concat_features(ordered_features, unordered_features, category_count, regs)
     _write_to_txt(labels, features, filename)
-
-def train_model(items, label_split):
-    filename = "/tmp/ram/diabetic_train_%d.txt" % label_split
-    _prepare_for_xgboost(items, label_split, filename)
     
     dtrain = xgb.DMatrix(filename)
-    param = {'max_depth':7, 'objective':'binary:logistic'}
-    num_round = 100
+    label = dtrain.get_label()
+    param = {'max_depth':6, 'objective':'binary:logistic', 'silent':1}
+    ratio = np.sum(label == 0) / np.sum(label == 1)
+    # param['scale_pos_weight'] = ratio
+    num_round = 50
     bst = xgb.train(param, dtrain, num_round)
 
-    return bst
+    return {"regs": regs, "bst": bst}
 
-def test_model(items, bst1, bst2):
-    filename1 = "/tmp/ram/diabetic_test_1.txt"
-    _prepare_for_xgboost(items, 1, filename1)
-    dtest1 = xgb.DMatrix(filename1)
-    preds1 = bst1.predict(dtest1)
-    preds1 = preds1 > 0.5
-
-    filename2 = "/tmp/ram/diabetic_test_2.txt"
-    _prepare_for_xgboost(items, 2, filename2)
-    dtest2 = xgb.DMatrix(filename2)
-    preds2 = bst2.predict(dtest2)
-    preds2 = preds2 > 0.5
+def test_model(items, category_count, clfs):
+    preds = []
+    for i, clf in enumerate(clfs):
+        filename = "/tmp/ram/diabetic_test_%d.txt" % i
+        labels, ordered_features, unordered_features = _extract_info(items, lambda a: 0)
+        regs = clf["regs"]
+        features = _concat_features(ordered_features, unordered_features, category_count, regs)
+        _write_to_txt(labels, features, filename)
+        dtest = xgb.DMatrix(filename)
+        preds.append(clf["bst"].predict(dtest))
 
     tp = [0, 0, 0]
     fp = [0, 0, 0]
     fn = [0, 0, 0]
     for i in range(len(items)):
-        if preds2[i]:
+        # if preds[2][i] > preds[1][i]:
+            # if preds[2][i] > preds[0][i]:
+                # pred = 3
+            # else:
+                # pred = 1
+        # else:
+            # if preds[1][i] > preds[0][i]:
+                # pred = 2
+            # else:
+                # pred = 1
+        if preds[0][i] > 0.5:
             pred = 3
-        elif preds1[i]:
+        elif preds[1][i] > 0.5:
             pred = 2
         else:
             pred = 1
+
         if pred == items[i]["label"]:
             tp[pred-1] += 1
         else:
@@ -137,16 +142,34 @@ def test_model(items, bst1, bst2):
     print("prem =", prem)
     print("recm =", recm)
     print("f1m =", f1m)
+    return f1m
 
 if __name__ == "__main__":
     import pickle
+    import random
     with open("/tmp/ram/diabetic_data.pkl", "rb") as f:
-        items = pickle.load(f)
+        data = pickle.load(f)
+        items = data["items"]
+        category_count = data["category_count"]
+        random.Random(0).shuffle(items)
+
     n = len(items)
-    split = int(n * 0.9)
-    train_items = items[:split]
-    test_items = items[split:]
-    bst1 = train_model(train_items, 1)
-    bst2 = train_model(train_items, 2)
-    test_model(test_items, bst1, bst2)
+    nfold = 10
+    fold_size = n // 10
+    f1ms = []
+    for i in range(10):
+        train_items = items[:i*fold_size] + items[(i+1)*fold_size:]
+        test_items = items[i*fold_size:(i+1)*fold_size] 
+
+        clf1 = train_model(train_items, category_count, lambda a: 1 if a == 3 else 0)
+        clf2 = train_model(train_items, category_count, lambda a: 1 if a == 2 else 0 if a == 1 else -1)
+        # clf1 = train_model(train_items, category_count, lambda a: 1 if a == 1 else 0)
+        # clf2 = train_model(train_items, category_count, lambda a: 1 if a == 2 else 0)
+        # clf3 = train_model(train_items, category_count, lambda a: 1 if a == 3 else 0)
+        # test_model(test_items, category_count, (clf1, clf2, clf3))
+
+        f1m = test_model(test_items, category_count, (clf1, clf2))
+        f1ms.append(f1m)
+    f1mm = np.mean(f1ms)
+    print("f1mm = ", f1mm)
 

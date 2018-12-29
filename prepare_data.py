@@ -19,7 +19,8 @@ def parse_data(dict_data):
     for dict_row in dict_data:
         item = parse_item(dict_row, mappings)
         items.append(item)
-    return items
+    category_count = {key:len(mappings[key]) - 1 for key in mappings.keys()}
+    return items, category_count
 
 def map_categories(mapping, category):
     if category not in mapping:
@@ -46,11 +47,11 @@ def parse_item(dict_row, mappings):
     ordered = []
     unordered = {}
     for key, value in dict_row.items():
-        if key == "encounter_id":
+        if key in ["encounter_id"]:
             pass
         elif key == "patient_nbr":
             pass
-        elif key in ["race", "payer_code", "medical_specialty"]:
+        elif key in ["race", "medical_specialty", "admission_type_id", "discharge_disposition_id", "admission_source_id", "payer_code"]:
             handle_simple_categories(unordered, mappings, key, value)
         elif key == "gender":
             i = 1 if value == "Female" else 2 if value == "Male" else "?"
@@ -61,12 +62,6 @@ def parse_item(dict_row, mappings):
             except:
                 i = "?"
             ordered.append(i)
-        elif key in ["admission_type_id", "discharge_disposition_id", "admission_source_id"]:
-            try:
-                i = int(value) - 1
-            except:
-                i = "?"
-            unordered[key] = i
         elif key in ["time_in_hospital", "num_lab_procedures", "num_procedures", "num_medications", "number_outpatient", "number_emergency", "number_inpatient", "number_diagnoses"]:
             try:
                 i = int(value)
@@ -79,9 +74,10 @@ def parse_item(dict_row, mappings):
             i = "?" if value == "None" else 0 if value == "Norm" else int(re.findall(r'\d+', value)[0])
             ordered.append(i)
         elif key in ["metformin", "repaglinide", "nateglinide", "chlorpropamide", "glimepiride", "acetohexamide", "glipizide", "glyburide", "tolbutamide", "pioglitazone", "rosiglitazone", "acarbose", "miglitol", "troglitazone", "tolazamide", "examide", "citoglipton", "insulin", "glyburide-metformin", "glipizide-metformin", "glimepiride-pioglitazone", "metformin-rosiglitazone", "metformin-pioglitazone"]:
-            medmapping = {"No":0, "Down":1, "Steady":2, "Up":3}
-            i = medmapping.get(value, "?")
-            ordered.append(i)
+            # medmapping = {"No":0, "Down":1, "Steady":2, "Up":3}
+            # i = medmapping.get(value, "?")
+            # ordered.append(i)
+            handle_listed_categories(unordered, mappings, "medcine", key+"+"+value)
         elif key in ["change", "diabetesMed"]:
             i = 0 if value == "No" else 1
             ordered.append(i)
@@ -94,8 +90,8 @@ def parse_item(dict_row, mappings):
 
 if __name__ == "__main__":
     dict_data = load_csv("/tmp/ram/diabetic_data.csv")
-    items = parse_data(dict_data)
+    items, category_count = parse_data(dict_data)
     # print(*items[:30], sep="\n")
     with open("/tmp/ram/diabetic_data.pkl", "wb") as f:
-        pickle.dump(items, f)
+        pickle.dump({"items": items, "category_count": category_count}, f)
 
