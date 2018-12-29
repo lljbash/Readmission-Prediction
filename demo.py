@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import configparser
 from prepare_data import prepare_data
 from model import run_model
