@@ -78,8 +78,8 @@ def _write_to_txt(labels, features, filename):
                     line += " %d:%.15f" % (i, float(entry))
             print(line, file=f)
 
-def train_model(items, category_count, label_filter):
-    filename = "/tmp/ram/diabetic_train_%d_%d_%d.txt" % (label_filter(1), label_filter(2), label_filter(3))
+def train_model(tmpdir, items, category_count, label_filter):
+    filename = tmpdir + "diabetic_train_%d_%d_%d.txt" % (label_filter(1), label_filter(2), label_filter(3))
     labels, ordered_features, unordered_features = _extract_info(items, label_filter)
     regs = _unordered_regression(unordered_features, category_count, labels)
     features = _concat_features(ordered_features, unordered_features, category_count, regs)
@@ -95,10 +95,10 @@ def train_model(items, category_count, label_filter):
 
     return {"regs": regs, "bst": bst}
 
-def test_model(items, category_count, clfs):
+def test_model(tmpdir, items, category_count, clfs):
     preds = []
     for i, clf in enumerate(clfs):
-        filename = "/tmp/ram/diabetic_test_%d.txt" % i
+        filename = tmpdir + "diabetic_test_%d.txt" % i
         labels, ordered_features, unordered_features = _extract_info(items, lambda a: 0)
         regs = clf["regs"]
         features = _concat_features(ordered_features, unordered_features, category_count, regs)
@@ -144,10 +144,12 @@ def test_model(items, category_count, clfs):
     print("f1m =", f1m)
     return f1m
 
-if __name__ == "__main__":
+def run_model(tmpdir):
     import pickle
     import random
-    with open("/tmp/ram/diabetic_data.pkl", "rb") as f:
+    if tmpdir[-1] != "/":
+        tmpdir += "/"
+    with open(tmpdir + "diabetic_data.pkl", "rb") as f:
         data = pickle.load(f)
         items = data["items"]
         category_count = data["category_count"]
@@ -161,15 +163,18 @@ if __name__ == "__main__":
         train_items = items[:i*fold_size] + items[(i+1)*fold_size:]
         test_items = items[i*fold_size:(i+1)*fold_size] 
 
-        clf1 = train_model(train_items, category_count, lambda a: 1 if a == 3 else 0)
-        clf2 = train_model(train_items, category_count, lambda a: 1 if a == 2 else 0 if a == 1 else -1)
-        # clf1 = train_model(train_items, category_count, lambda a: 1 if a == 1 else 0)
-        # clf2 = train_model(train_items, category_count, lambda a: 1 if a == 2 else 0)
-        # clf3 = train_model(train_items, category_count, lambda a: 1 if a == 3 else 0)
-        # test_model(test_items, category_count, (clf1, clf2, clf3))
+        clf1 = train_model(tmpdir, train_items, category_count, lambda a: 1 if a == 3 else 0)
+        clf2 = train_model(tmpdir, train_items, category_count, lambda a: 1 if a == 2 else 0 if a == 1 else -1)
+        f1m = test_model(tmpdir, test_items, category_count, (clf1, clf2))
+        # clf1 = train_model(tmpdir, train_items, category_count, lambda a: 1 if a == 1 else 0)
+        # clf2 = train_model(tmpdir, train_items, category_count, lambda a: 1 if a == 2 else 0)
+        # clf3 = train_model(tmpdir, train_items, category_count, lambda a: 1 if a == 3 else 0)
+        # f1m = test_model(tmpdir, test_items, category_count, (clf1, clf2, clf3))
 
-        f1m = test_model(test_items, category_count, (clf1, clf2))
         f1ms.append(f1m)
     f1mm = np.mean(f1ms)
     print("f1mm = ", f1mm)
+
+if __name__ == "__main__":
+    run_model("/tmp/ram")
 

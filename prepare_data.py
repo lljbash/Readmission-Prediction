@@ -88,10 +88,15 @@ def parse_item(dict_row, mappings):
     item = {"label":label, "ordered":ordered, "unordered":unordered}
     return item
 
-if __name__ == "__main__":
-    dict_data = load_csv("/tmp/ram/diabetic_data.csv")
+def prepare_data(data_path, tmpdir):
+    dict_data = load_csv(data_path)
     items, category_count = parse_data(dict_data)
     # print(*items[:30], sep="\n")
-    with open("/tmp/ram/diabetic_data.pkl", "wb") as f:
+    if tmpdir[-1] != "/":
+        tmpdir += "/"
+    with open(tmpdir + "diabetic_data.pkl", "wb") as f:
         pickle.dump({"items": items, "category_count": category_count}, f)
+
+if __name__ == "__main__":
+    prepare_data("/tmp/ram/diabetic_data.csv", "/tmp/ram")
 
