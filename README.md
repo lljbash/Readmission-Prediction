@@ -7,6 +7,6 @@ Data Mining Homework Assignment 2
 - xgboost
 
 ## Run Demo
-1. Set current path in `config.ini`.
+1. Set correct path in `config.ini`.
 2. Run `python3 demo.py`.
 
